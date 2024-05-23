@@ -8,6 +8,46 @@ struct ListNode
     ListNode *nextNode;
     ListNode *iter;
 
+    void AddX()
+    {
+        InitIter();
+        while (Iter())
+        {
+            iter->x++;
+            NextIter();
+        }
+    }
+
+    void SubX()
+    {
+        InitIter();
+        while (Iter())
+        {
+            iter->x--;
+            NextIter();
+        }
+    }
+
+    void AddY()
+    {
+        InitIter();
+        while (Iter())
+        {
+            iter->y++;
+            NextIter();
+        }
+    }
+
+    void SubY()
+    {
+        InitIter();
+        while (Iter())
+        {
+            iter->y--;
+            NextIter();
+        }
+    }
+
     ListNode *Front()
     {
         if (this->nextNode)
@@ -32,6 +72,16 @@ struct ListNode
             node = node->nextNode;
         free(node->nextNode);
         node->nextNode = nullptr;
+    }
+
+    void CopyBack()
+    {
+        ListNode *back = this->Back();
+        ListNode *newNode = (ListNode *)malloc(sizeof(ListNode));
+        newNode->x = back->x;
+        newNode->y = back->y;
+        newNode->nextNode = nullptr;
+        back->nextNode = newNode;
     }
 
     void PushFront(ListNode *node)
@@ -90,10 +140,10 @@ struct ListNode
         return iter;
     }
 
-    int Count()
+    uint8_t Count()
     {
         ListNode *node = this->nextNode;
-        int res = 0;
+        uint8_t res = 0;
         while (node)
         {
             node = node->nextNode;

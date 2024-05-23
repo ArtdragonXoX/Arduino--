@@ -1,16 +1,16 @@
 #include <Arduino.h>
 
-#include "LiquidCrystal.h"
+#include "LiquidCrystal_I2C.h"
 #include "LedControl.h"
 
 #include "List.h"
 
 #define VERT_PIN_A A0
 #define HORZ_PIN_A A1
-#define SEL_PIN_A A2
+#define SEL_PIN_A 9
 #define VERT_PIN_B A3
-#define HORZ_PIN_B A4
-#define SEL_PIN_B A5
+#define HORZ_PIN_B A2
+#define SEL_PIN_B 8
 
 #define INITIAL 0
 #define START_MENU 1
@@ -29,33 +29,83 @@
 #define RIGHTARROWS byte(2)
 #define HOOK byte(3)
 
-#define DIE 0
 #define SNAKE 1
 #define TETRIS 2
+#define DIE 3
 
 #define PLAYER_A 65
 #define PLAYER_B 66
 
 typedef uint8_t RockerSignal;
 
+typedef uint16_t Time;
+
+struct Location
+{
+    uint8_t x, y;
+    void SetData(uint8_t x, uint8_t y)
+    {
+        this->x = x;
+        this->y = y;
+    }
+    // 重载==运算符用于判断是否坐标相等
+    bool operator==(const Location &a)
+    {
+        if (x == a.x && y == a.y)
+            return true;
+        return false;
+    }
+    bool operator==(const ListNode &a)
+    {
+        if (x == a.x && y == a.y)
+            return true;
+        return false;
+    }
+};
+
+// 摇杆PIN口
 uint8_t RockerPin_A[] = {VERT_PIN_A, HORZ_PIN_A, SEL_PIN_A};
 uint8_t RockerPin_B[] = {VERT_PIN_B, HORZ_PIN_B, SEL_PIN_B};
 
+// 系统状态
 uint8_t state = INITIAL;
 
-uint8_t playerStateA = 0;
-uint8_t playerStateB = 0;
-
+// 玩家标签
 bool playFlagA = false;
 bool playFlagB = false;
 
-uint8_t playAX, playAY, playBX, playBY;
+// 玩家坐标
+Location playerA, playerB;
 
+// 玩家数据链表
 List *listA, *listB;
 
-int masterClock = 0;
-int playerClockA = 0;
-int playerClockB = 0;
+// 主时钟
+Time masterClock = 0;
+
+// 强制移动的方向
+uint8_t playerDirA;
+uint8_t playerDirB;
+// 伤害
+uint8_t damageA;
+uint8_t damageB;
+// 攻击时间
+Time ackClockA;
+Time ackClockB;
+uint8_t tick;             // 一秒的游戏刻
+uint8_t tickTime;         // 一游戏刻的时间
+uint8_t lengthA, lengthB; // 玩家长度
+
+// 强制移动的时间
+Time moveClockA;
+Time moveClockB;
+
+// 玩家状态
+uint8_t playerStateA;
+uint8_t playerStateB;
+
+// 食物
+Location foodA, foodB;
 
 byte block_char[8] =
     {
@@ -106,8 +156,9 @@ byte hook_char[8] =
 LedControl lcA = LedControl(5, 7, 6, 2);
 LedControl lcB = LedControl(2, 4, 3, 2);
 // 声明lcd
-LiquidCrystal lcd(13, 12, 11, 10, 9, 8);
+LiquidCrystal_I2C lcd(0x27, 16, 2);
 
+// 地图
 uint8_t map_A[16] = {0};
 uint8_t map_B[16] = {0};
 
@@ -118,55 +169,6 @@ uint8_t ReverseBit(uint8_t x)
     x = (((x & 0xcc) >> 2) | ((x & 0x33) << 2));
 
     return ((x >> 4) | (x << 4));
-}
-
-bool MovePlayer(char player, uint8_t direction)
-{
-    if (direction == 0)
-        return true;
-    if (player == PLAYER_A)
-    {
-        uint8_t _playAX = playAX, _playAY = playAY;
-        if (direction == LEFT)
-            playAX--;
-        else if (direction == RIGHT)
-            playAX++;
-        else if (direction == UP)
-            playAY++;
-        else if (direction == DOWN)
-            playAY--;
-
-        uint8_t mapData = (map_A[playAY] << playAX) & 0x80;
-
-        if (playAX > 7 || playAX < 0 || playAY < 0 || playAY > 15 || mapData == 0x80)
-        {
-            playAX = _playAX;
-            playAY = _playAY;
-            return false;
-        }
-    }
-    else if (player == PLAYER_B)
-    {
-        uint8_t _playBX = playBX, _playBY = playBY;
-        if (direction == LEFT)
-            playBX--;
-        else if (direction == RIGHT)
-            playBX++;
-        else if (direction == UP)
-            playBY++;
-        else if (direction == DOWN)
-            playBY--;
-
-        uint8_t mapData = (map_B[playBY] << playBX) & 0x80;
-
-        if (playBX > 7 || playBX < 0 || playBY < 0 || playBY > 15 || mapData == 0x80)
-        {
-            playBX = _playBX;
-            playBY = _playBY;
-            return false;
-        }
-    }
-    return true;
 }
 
 // 更新地图
@@ -182,6 +184,26 @@ void UpdateMap(char player, uint8_t x, uint8_t y, bool arg)
         map[y] = map[y] | updateData;
     else
         map[y] = map[y] & ~updateData;
+}
+
+void UpdateMap(char player, const Location &location, bool arg)
+{
+    UpdateMap(player, location.x, location.y, arg);
+}
+
+// 查询地图
+bool QueryMap(char player, uint8_t x, uint8_t y)
+{
+    uint8_t *map;
+    if (player == PLAYER_A)
+        map = map_A;
+    if (player == PLAYER_B)
+        map = map_B;
+    uint8_t mask = 0x80 >> x;
+    uint8_t data = mask & map[y];
+    if (data > 0)
+        return true;
+    return false;
 }
 
 // 更新显示屏
@@ -262,17 +284,223 @@ void ClearLED()
     ClearLED(PLAYER_B);
 }
 
+// 上移地图
+bool ShiftUpMap(char player, uint8_t data)
+{
+    uint8_t *map;
+    if (player == PLAYER_A)
+        map = map_A;
+    if (player == PLAYER_B)
+        map = map_B;
+    if (map[15] > 0)
+        return false;
+    for (uint8_t i = 15; i > 1; i--)
+        map[i] = map[i - 1];
+    map[0] = data;
+    return true;
+}
+
+// 去除地图其中一行
+void RemoveRow(char player, uint8_t row)
+{
+    uint8_t *map;
+    if (player == PLAYER_A)
+        map = map_A;
+    if (player == PLAYER_B)
+        map = map_B;
+    for (uint8_t i = row; i < 15; i++)
+        map[i] = map[i + 1];
+}
+
+// 检查地图是有可消除行
+uint8_t CheckMap(char player)
+{
+    uint8_t res = 0;
+    uint8_t *map;
+    if (player == PLAYER_A)
+        map = map_A;
+    if (player == PLAYER_B)
+        map = map_B;
+    for (uint8_t i = 0; i < 15; i++)
+    {
+        if (map[i - res] == 0xff)
+        {
+            RemoveRow(player, i - res);
+            res++;
+        }
+    }
+    return res;
+}
+
+// 俄罗斯方块实体化
+bool TetrisTrMap(char player)
+{
+    List *playerList;
+    if (player == PLAYER_A)
+        playerList = listA;
+    if (player == PLAYER_B)
+        playerList = listB;
+    playerList->InitIter();
+    while (playerList->Iter())
+    {
+        auto iter = playerList->Iter();
+        if (iter->y > 15)
+            return false;
+        UpdateMap(player, iter->x, iter->y, true);
+    }
+    return true;
+}
+
+// 玩家坐标移动
+bool MovePlayer(char player, uint8_t direction)
+{
+    if (direction == 0)
+        return true;
+    uint8_t *map;
+    Location *playerL;
+    if (player == PLAYER_A)
+    {
+        playerL = &playerA;
+        map = map_A;
+    }
+    if (player == PLAYER_B)
+    {
+        playerL = &playerB;
+        map = map_B;
+    }
+    Location _playerL = *playerL;
+    if (direction == LEFT)
+        playerL->x--;
+    else if (direction == RIGHT)
+        playerL->x++;
+    else if (direction == UP)
+        playerL->y++;
+    else if (direction == DOWN)
+        playerL->y--;
+    uint8_t mapData = (map[playerL->y] << playerL->x) & 0x80;
+    if (playerL->x > 7 || playerL->x < 0 || playerL->y < 0 || playerL->y > 15 || mapData == 0x80)
+    {
+        *playerL = _playerL;
+        return false;
+    }
+    return true;
+}
+
+// 蛇移动
+bool MoveSnake(char player, uint8_t direction, uint8_t length)
+{
+    List *playerList;
+    Location *playerL;
+    if (player == PLAYER_A)
+    {
+        playerList = listA;
+        playerL = &playerA;
+    }
+    if (player == PLAYER_B)
+    {
+        playerList = listB;
+        playerL = &playerB;
+    }
+    playerList->InitIter();
+    uint8_t nowLength = playerList->Count();
+    if (!MovePlayer(player, direction))
+        return false;
+    if (nowLength < length)
+    {
+        playerList->CopyBack();
+        auto back = playerList->Back();
+        if (back->x == playerL->x && back->y == playerL->y)
+            return false;
+    }
+    else
+        playerList->RemoveBack();
+    while (playerList->Iter())
+    {
+        auto iter = playerList->Iter();
+        if (iter->x == playerL->x && iter->y == playerL->y)
+            return false;
+        playerList->NextIter();
+    }
+    playerList->PushFront(playerL->x, playerL->y);
+    return true;
+}
+
+// 俄罗斯方块移动
+bool MoveTetris(char player, uint8_t direction)
+{
+    List *playerList;
+    if (player == PLAYER_A)
+        playerList = listA;
+    if (player == PLAYER_B)
+        playerList = listB;
+    playerList->InitIter();
+    while (playerList->Iter())
+    {
+        auto iter = playerList->Iter();
+        if (direction == SEL)
+        {
+            while (MoveTetris(player, DOWN))
+                return false;
+        }
+        else if (direction == DOWN)
+        {
+            if (QueryMap(player, iter->x, iter->y - 1))
+                return false;
+        }
+        else if (direction == LEFT)
+        {
+            if (iter->x == 0 || QueryMap(player, iter->x - 1, iter->y))
+            {
+                return true;
+            }
+        }
+        else if (direction == RIGHT)
+        {
+            if (iter->x == 7 || QueryMap(player, iter->x + 1, iter->y))
+            {
+                return true;
+            }
+        }
+    }
+    if (direction == DOWN)
+    {
+        playerList->SubY();
+    }
+    else if (direction == LEFT)
+    {
+        playerList->SubX();
+    }
+    else if (direction == RIGHT)
+    {
+        playerList->AddX();
+    }
+    return true;
+}
+
 // 初始化系统
 void InitSystem()
 {
     playFlagA = false;
     playFlagB = false;
-    playAX = playAY = playBX = playBY = 0;
+    playerA.SetData(0, 0);
+    playerB.SetData(0, 0);
     listA->RemoveAll();
     listB->RemoveAll();
     masterClock = 0;
-    playerClockA = 0;
-    playerClockB = 0;
+    playerDirA = DOWN;
+    playerDirB = DOWN;
+    damageA = 0;
+    damageB = 0;
+    ackClockA = 0;
+    ackClockB = 0;
+    lengthA = 0;
+    lengthB = 0;
+    tick = 20;
+    tickTime = 1000 / tick;
+    moveClockA = tick;
+    moveClockB = tick;
+    playerStateA = INITIAL;
+    playerStateB = INITIAL;
     ClearMap();
     ClearLED();
     lcd.clear();
@@ -297,8 +525,10 @@ void StartMenu()
 {
     lcd.setCursor(2, 0);
     lcd.print("WAIT PLAYERS");
+    // 玩家准备标签
     bool readyFlagA = false;
     bool readyFlagB = false;
+    // 等待玩家
     while (true)
     {
         if (playFlagA)
@@ -307,7 +537,7 @@ void StartMenu()
             MovePlayer(PLAYER_A, opA);
             if (opA == SEL)
                 readyFlagA = true;
-            UpdateMap(PLAYER_A, playAX, playAY, true);
+            UpdateMap(PLAYER_A, playerA, true);
             UpdateDisplay(PLAYER_A);
         }
         if (!playFlagA)
@@ -324,7 +554,7 @@ void StartMenu()
             MovePlayer(PLAYER_B, opB);
             if (opB == SEL)
                 readyFlagB = true;
-            UpdateMap(PLAYER_B, playBX, playBY, true);
+            UpdateMap(PLAYER_B, playerB, true);
             UpdateDisplay(PLAYER_B);
         }
         if (!playFlagB)
@@ -363,20 +593,97 @@ void StartMenu()
         delay(1000);
     }
     state = GAMING;
+    lcd.clear();
+    ClearMap();
+    ClearLED();
+}
+
+void PlayerEvent(char player, uint8_t &length, Location &food, Time &moveClock, uint8_t &playerDir, Location &playerL, uint8_t &playerState, List *list)
+{
+    RockerSignal op = GetRockerSignal(player);
+    if (playerState == SNAKE)
+    {
+        if (op != 0 && op != SEL)
+        {
+            playerDir = op;
+            if (!MoveSnake(player, op, length)) // 判断移动是否成功
+            {
+                playerState = DIE;
+            }
+            else
+            {
+                if (playerL == food) // 如果吃到食物
+                {
+                    playerState = TETRIS;
+                }
+                moveClock = masterClock + tick;
+            }
+        }
+        else
+        {
+            if (moveClock == masterClock)
+            {
+                if (!MoveSnake(player, playerDir, length)) // 判断移动是否成功
+                {
+                    playerState = DIE;
+                }
+                else
+                {
+                    if (playerL == food) // 如果吃到食物
+                    {
+                        playerState = TETRIS;
+                    }
+                    moveClock = masterClock + tick;
+                }
+            }
+        }
+    }
+    else if (playerState == TETRIS)
+    {
+    }
+    else if (playerState == INITIAL)
+    {
+        playerL.SetData(random(0, 8), 15);
+        list->RemoveAll();
+        list->PushFront(playerL.x, 15);
+        playerDir = DOWN;
+        playerState = SNAKE;
+        food.SetData(random(1, 7), random(10, 13));
+        length = random(3, 7);
+        moveClock = masterClock + tick;
+    }
 }
 
 // 游戏进程
 void Gaming()
 {
-    uint8_t playerDirA = DOWN;
-    uint8_t playerDirB = DOWN;
-    uint8_t ackA = 0;
-    uint8_t ackB = 0;
-    uint8_t ackClock = 3;
+    while (true)
+    {
+        if (playFlagA) // 处理玩家A事件
+        {
+            PlayerEvent(PLAYER_A, lengthA, foodA, moveClockA, playerDirA, playerA, playerStateA, listA);
+            UpdateDisplay(PLAYER_A);
+            listA->InitIter();
+
+            while (listA->Iter())
+            {
+                auto iter = listA->Iter();
+                lcA.setLed(iter->y < 8 ? 0 : 1, 7 - iter->x, iter->y % 8, true);
+                lcd.setCursor(0, 0);
+                lcd.clear();
+                lcd.print(iter->y);
+                lcd.print(iter->x);
+            }
+        }
+        delay(tickTime);
+        masterClock++;
+    }
 }
 
 void setup()
 {
+    lcd.init();
+    lcd.backlight();
     // 初始化摇杆
     pinMode(VERT_PIN_A, INPUT);
     pinMode(HORZ_PIN_A, INPUT);
@@ -393,9 +700,10 @@ void setup()
     listA = InitList();
     listB = InitList();
 
-    randomSeed(analogRead(0));
+    randomSeed(analogRead(A4));
     InitSystem();
     StartMenu();
+    Gaming();
 }
 
 void loop()
