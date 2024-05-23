@@ -1,16 +1,16 @@
 #include <Arduino.h>
 
-#include "LiquidCrystal_I2C.h"
+#include "LiquidCrystal.h"
 #include "LedControl.h"
 
 #include "List.h"
 
 #define VERT_PIN_A A0
 #define HORZ_PIN_A A1
-#define SEL_PIN_A 9
+#define SEL_PIN_A 1
 #define VERT_PIN_B A3
-#define HORZ_PIN_B A2
-#define SEL_PIN_B 8
+#define HORZ_PIN_B A4
+#define SEL_PIN_B 0
 
 #define INITIAL 0
 #define START_MENU 1
@@ -156,7 +156,7 @@ byte hook_char[8] =
 LedControl lcA = LedControl(5, 7, 6, 2);
 LedControl lcB = LedControl(2, 4, 3, 2);
 // 声明lcd
-LiquidCrystal_I2C lcd(0x27, 16, 2);
+LiquidCrystal lcd(13, 12, 11, 10, 9, 8);
 
 // 地图
 uint8_t map_A[16] = {0};
@@ -240,6 +240,34 @@ void ClearMap()
 {
     ClearMap(PLAYER_A);
     ClearMap(PLAYER_B);
+}
+
+void RefreshDisplay(char player)
+{
+    Location *food;
+    List *list;
+    LedControl *lc;
+    if (player == PLAYER_A)
+    {
+        food = &foodA;
+        list = listA;
+        lc = &lcA;
+    }
+    if (player == PLAYER_B)
+    {
+        food = &foodB;
+        list = listB;
+        lc = &lcA;
+    }
+    UpdateDisplay(player);
+    list->InitIter();
+    lc->setLed(food->y < 8 ? 0 : 1, 7 - food->x, food->y % 8, true);
+    while (list->Iter())
+    {
+        auto iter = list->Iter();
+        lc->setLed(iter->y < 8 ? 0 : 1, 7 - iter->x, iter->y % 8, true);
+        list->NextIter();
+    }
 }
 
 // 读取摇杆数据
@@ -344,9 +372,10 @@ bool TetrisTrMap(char player)
     while (playerList->Iter())
     {
         auto iter = playerList->Iter();
-        if (iter->y > 15)
+        if (iter->y == 15)
             return false;
         UpdateMap(player, iter->x, iter->y, true);
+        playerList->NextIter();
     }
     return true;
 }
@@ -425,7 +454,7 @@ bool MoveSnake(char player, uint8_t direction, uint8_t length)
     return true;
 }
 
-// 俄罗斯方块移动
+// 俄罗斯方块移动，返回true为可以继续下落，返回false为实体化
 bool MoveTetris(char player, uint8_t direction)
 {
     List *playerList;
@@ -444,7 +473,7 @@ bool MoveTetris(char player, uint8_t direction)
         }
         else if (direction == DOWN)
         {
-            if (QueryMap(player, iter->x, iter->y - 1))
+            if (QueryMap(player, iter->x, iter->y - 1) || iter->y == 0)
                 return false;
         }
         else if (direction == LEFT)
@@ -461,6 +490,7 @@ bool MoveTetris(char player, uint8_t direction)
                 return true;
             }
         }
+        playerList->NextIter();
     }
     if (direction == DOWN)
     {
@@ -598,7 +628,7 @@ void StartMenu()
     ClearLED();
 }
 
-void PlayerEvent(char player, uint8_t &length, Location &food, Time &moveClock, uint8_t &playerDir, Location &playerL, uint8_t &playerState, List *list)
+bool PlayerEvent(char player, uint8_t &length, Location &food, Time &moveClock, uint8_t &playerDir, Location &playerL, uint8_t &playerState, List *list)
 {
     RockerSignal op = GetRockerSignal(player);
     if (playerState == SNAKE)
@@ -618,10 +648,11 @@ void PlayerEvent(char player, uint8_t &length, Location &food, Time &moveClock, 
                 }
                 moveClock = masterClock + tick;
             }
+            return true;
         }
         else
         {
-            if (moveClock == masterClock)
+            if (moveClock < masterClock)
             {
                 if (!MoveSnake(player, playerDir, length)) // 判断移动是否成功
                 {
@@ -635,11 +666,38 @@ void PlayerEvent(char player, uint8_t &length, Location &food, Time &moveClock, 
                     }
                     moveClock = masterClock + tick;
                 }
+                return true;
             }
         }
     }
     else if (playerState == TETRIS)
     {
+        if (op)
+        {
+            if (!MoveTetris(player, op))
+            {
+                if (!TetrisTrMap(player))
+                    playerState = DIE;
+                else
+                    playerState = INITIAL;
+            }
+            if (op == DOWN)
+                moveClock = masterClock + tick;
+        }
+        if (moveClock < masterClock && playerState == TETRIS)
+        {
+            if (!MoveTetris(player, DOWN))
+            {
+                if (!TetrisTrMap(player))
+                    playerState = DIE;
+                else
+                    playerState = INITIAL;
+            }
+            moveClock = masterClock + tick;
+            return true;
+        }
+        if (op)
+            return true;
     }
     else if (playerState == INITIAL)
     {
@@ -647,11 +705,13 @@ void PlayerEvent(char player, uint8_t &length, Location &food, Time &moveClock, 
         list->RemoveAll();
         list->PushFront(playerL.x, 15);
         playerDir = DOWN;
-        playerState = SNAKE;
-        food.SetData(random(1, 7), random(10, 13));
+        food.SetData(random(1, 7), random(12, 14));
         length = random(3, 7);
         moveClock = masterClock + tick;
+        playerState = SNAKE;
+        return true;
     }
+    return false;
 }
 
 // 游戏进程
@@ -661,20 +721,19 @@ void Gaming()
     {
         if (playFlagA) // 处理玩家A事件
         {
-            PlayerEvent(PLAYER_A, lengthA, foodA, moveClockA, playerDirA, playerA, playerStateA, listA);
-            UpdateDisplay(PLAYER_A);
-            listA->InitIter();
-
-            while (listA->Iter())
-            {
-                auto iter = listA->Iter();
-                lcA.setLed(iter->y < 8 ? 0 : 1, 7 - iter->x, iter->y % 8, true);
-                lcd.setCursor(0, 0);
-                lcd.clear();
-                lcd.print(iter->y);
-                lcd.print(iter->x);
-            }
+            if (PlayerEvent(PLAYER_A, lengthA, foodA, moveClockA, playerDirA, playerA, playerStateA, listA))
+                RefreshDisplay(PLAYER_A);
+            if (playerStateA == INITIAL)
+                CheckMap(PLAYER_A);
         }
+        if (playerStateA == DIE)
+        {
+            lcd.clear();
+            lcd.print("DIE");
+            break;
+        }
+        lcd.setCursor(0, 0);
+        lcd.print(masterClock / tick);
         delay(tickTime);
         masterClock++;
     }
@@ -682,8 +741,6 @@ void Gaming()
 
 void setup()
 {
-    lcd.init();
-    lcd.backlight();
     // 初始化摇杆
     pinMode(VERT_PIN_A, INPUT);
     pinMode(HORZ_PIN_A, INPUT);
@@ -700,7 +757,7 @@ void setup()
     listA = InitList();
     listB = InitList();
 
-    randomSeed(analogRead(A4));
+    randomSeed(analogRead(A5));
     InitSystem();
     StartMenu();
     Gaming();

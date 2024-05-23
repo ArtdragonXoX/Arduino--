@@ -13,6 +13,7 @@
       "attrs": { "chain": "2" }
     },
     { "type": "wokwi-analog-joystick", "id": "joystick1", "top": 325.8, "left": 63, "attrs": {} },
+    { "type": "wokwi-lcd1602", "id": "lcd1", "top": 22.63, "left": 160, "attrs": {} },
     {
       "type": "wokwi-analog-joystick",
       "id": "joystick2",
@@ -29,11 +30,11 @@
       "attrs": { "chain": "2" }
     },
     {
-      "type": "wokwi-lcd1602",
-      "id": "lcd1",
-      "top": 25.6,
-      "left": 159.2,
-      "attrs": { "pins": "i2c" }
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": 176.75,
+      "left": 268.8,
+      "attrs": { "value": "220" }
     }
   ],
   "connections": [
@@ -46,6 +47,18 @@
     [ "matrix2:CS", "uno:3", "blue", [ "v48", "h-163.2" ] ],
     [ "matrix1:CLK", "uno:7", "green", [ "v38.4", "h297.6" ] ],
     [ "matrix2:CLK", "uno:4", "green", [ "v38.4", "h-153.6" ] ],
+    [ "lcd1:K", "uno:GND.1", "black", [ "v38.4", "h-67.2" ] ],
+    [ "lcd1:VSS", "uno:GND.1", "black", [ "v38.4", "h76.8" ] ],
+    [ "lcd1:VDD", "uno:5V", "red", [ "v326.4", "h105.7" ] ],
+    [ "lcd1:A", "r1:2", "violet", [ "v0" ] ],
+    [ "r1:1", "uno:5V", "red", [ "v0", "h-48", "v307.2", "h105.6" ] ],
+    [ "lcd1:D7", "uno:8", "green", [ "v86.4", "h9.9" ] ],
+    [ "lcd1:D6", "uno:9", "green", [ "v86.4", "h9.8" ] ],
+    [ "lcd1:D5", "uno:10", "green", [ "v86.4", "h9.7" ] ],
+    [ "lcd1:D4", "uno:11", "green", [ "v86.4", "h9.6" ] ],
+    [ "lcd1:RW", "uno:GND.1", "black", [ "v38.4", "h38.3" ] ],
+    [ "lcd1:E", "uno:12", "green", [ "v86.4", "h48" ] ],
+    [ "lcd1:RS", "uno:13", "green", [ "v96", "h19.5" ] ],
     [ "joystick1:VCC", "uno:5V", "red", [ "v28.8", "h220.8" ] ],
     [ "joystick2:VCC", "uno:5V", "red", [ "v28.8", "h-182.4" ] ],
     [ "joystick1:GND", "uno:GND.2", "black", [ "v9.6", "h201.6" ] ],
@@ -53,14 +66,10 @@
     [ "joystick1:VERT", "uno:A0", "gold", [ "v19.2", "h259.2" ] ],
     [ "joystick1:HORZ", "uno:A1", "green", [ "v19.2", "h268.8" ] ],
     [ "joystick2:VERT", "uno:A3", "gold", [ "v19.2", "h-115.2" ] ],
+    [ "joystick2:HORZ", "uno:A4", "green", [ "v19.2", "h-105.6" ] ],
     [ "matrix1:V+", "uno:5V", "red", [ "v67.2", "h67.2", "v249.6", "h163.2" ] ],
-    [ "lcd1:GND", "uno:GND.1", "black", [ "h-9.6", "v153.6", "h134.4" ] ],
-    [ "lcd1:VCC", "uno:5V", "red", [ "h9.6", "v432.1", "h163.2" ] ],
-    [ "lcd1:SCL", "uno:A5.2", "blue", [ "h-19.2", "v163.5", "h115.2" ] ],
-    [ "lcd1:SDA", "uno:A4.2", "green", [ "h-9.6", "v153.8", "h115.2" ] ],
-    [ "joystick2:HORZ", "uno:A2", "green", [ "v38.4", "h-124.8" ] ],
-    [ "joystick1:SEL", "uno:9", "blue", [ "v0", "h201.6" ] ],
-    [ "joystick2:SEL", "uno:8", "blue", [ "v0", "h-192" ] ]
+    [ "joystick2:SEL", "uno:0", "blue", [ "v19.2", "h57.6", "v-201.6" ] ],
+    [ "joystick1:SEL", "uno:1", "blue", [ "v19.2", "h-67.2", "v-201.6", "h364.8" ] ]
   ],
   "dependencies": {}
 }

@@ -122,6 +122,7 @@ struct ListNode
             node = node->nextNode;
             free(freeNode);
         }
+        nextNode = nullptr;
     }
 
     void InitIter()
