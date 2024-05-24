@@ -107,6 +107,11 @@ uint8_t playerStateB;
 // 食物
 Location foodA, foodB;
 
+// 机器人寻找的插入点
+Location RobotInsert;
+// 寻找标签
+bool RobotInsertFlag;
+
 byte block_char[8] =
     {
         B11111,
@@ -247,21 +252,25 @@ void RefreshDisplay(char player)
     Location *food;
     List *list;
     LedControl *lc;
+    uint8_t playerState;
     if (player == PLAYER_A)
     {
         food = &foodA;
         list = listA;
         lc = &lcA;
+        playerState = playerStateA;
     }
     if (player == PLAYER_B)
     {
         food = &foodB;
         list = listB;
-        lc = &lcA;
+        lc = &lcB;
+        playerState = playerStateB;
     }
     UpdateDisplay(player);
     list->InitIter();
-    lc->setLed(food->y < 8 ? 0 : 1, 7 - food->x, food->y % 8, true);
+    if (playerState == SNAKE)
+        lc->setLed(food->y < 8 ? 0 : 1, 7 - food->x, food->y % 8, true);
     while (list->Iter())
     {
         auto iter = list->Iter();
@@ -313,18 +322,20 @@ void ClearLED()
 }
 
 // 上移地图
-bool ShiftUpMap(char player, uint8_t data)
+bool ShiftUpMap(char player, uint8_t data, uint8_t &damage)
 {
     uint8_t *map;
     if (player == PLAYER_A)
         map = map_A;
     if (player == PLAYER_B)
         map = map_B;
-    if (map[15] > 0)
+
+    if (map[15 - damage + 1] > 0)
         return false;
-    for (uint8_t i = 15; i > 1; i--)
-        map[i] = map[i - 1];
-    map[0] = data;
+    for (uint8_t i = 15; i >= damage; i--)
+        map[i] = map[i - damage];
+    for (uint8_t i = 0; i < damage; i++)
+        map[i] = data;
     return true;
 }
 
@@ -469,7 +480,9 @@ bool MoveTetris(char player, uint8_t direction)
         if (direction == SEL)
         {
             while (MoveTetris(player, DOWN))
-                return false;
+            {
+            }
+            return false;
         }
         else if (direction == DOWN)
         {
@@ -505,6 +518,275 @@ bool MoveTetris(char player, uint8_t direction)
         playerList->AddX();
     }
     return true;
+}
+
+// 玩家事件处理
+bool PlayerEvent(char player, RockerSignal op, uint8_t &length, Location &food, Time &moveClock, uint8_t &playerDir, Location &playerL, uint8_t &playerState, List *list)
+{
+    if (playerState == SNAKE)
+    {
+        if (op != 0 && op != SEL)
+        {
+            playerDir = op;
+            if (!MoveSnake(player, op, length)) // 判断移动是否成功
+            {
+                playerState = DIE;
+            }
+            else
+            {
+                if (playerL == food) // 如果吃到食物
+                {
+                    playerState = TETRIS;
+                }
+                moveClock = masterClock + tick;
+            }
+            return true;
+        }
+        else
+        {
+            if (moveClock < masterClock)
+            {
+                if (!MoveSnake(player, playerDir, length)) // 判断移动是否成功
+                {
+                    playerState = DIE;
+                }
+                else
+                {
+                    if (playerL == food) // 如果吃到食物
+                    {
+                        playerState = TETRIS;
+                    }
+                    moveClock = masterClock + tick;
+                }
+                return true;
+            }
+        }
+    }
+    else if (playerState == TETRIS)
+    {
+        if (op)
+        {
+            if (!MoveTetris(player, op))
+            {
+                if (!TetrisTrMap(player))
+                    playerState = DIE;
+                else
+                    playerState = INITIAL;
+            }
+            if (op == DOWN)
+                moveClock = masterClock + tick;
+        }
+        if (moveClock < masterClock && playerState == TETRIS)
+        {
+            if (!MoveTetris(player, DOWN))
+            {
+                if (!TetrisTrMap(player))
+                    playerState = DIE;
+                else
+                    playerState = INITIAL;
+            }
+            moveClock = masterClock + tick;
+            return true;
+        }
+        if (op)
+            return true;
+    }
+    else if (playerState == INITIAL)
+    {
+        playerL.SetData(random(0, 8), 15);
+        list->RemoveAll();
+        list->PushFront(playerL.x, 15);
+        playerDir = DOWN;
+        food.SetData(random(1, 7), random(12, 14));
+        while (QueryMap(player, food.x, food.y) || food.x == playerL.x) // 查看食物是否生成在地图方块或蛇的同一列上
+            food.SetData(random(1, 7), random(12, 14));
+        length = random(3, 7);
+        moveClock = masterClock + tick;
+        playerState = SNAKE;
+        return true;
+    }
+    return false;
+}
+
+// 攻击事件
+bool AckEvent(char player, uint8_t &damage)
+{
+    char object;
+    uint8_t *playerState;
+    if (player == PLAYER_A)
+    {
+        object = PLAYER_B;
+        playerState = &playerStateA;
+    }
+    if (player == PLAYER_B)
+    {
+        object = PLAYER_A;
+        playerState = &playerStateB;
+    }
+    uint8_t gap = random(0, 8);
+    uint8_t mask = 0x80 >> gap;
+    uint8_t date = 0xff ^ mask;
+    if (!ShiftUpMap(object, date, damage))
+        *playerState = DIE;
+    return true;
+}
+
+// 在lcd屏上显示信息
+void GamingInfo()
+{
+    lcd.clear();
+    lcd.setCursor(6, 0);
+    lcd.print("TIME");
+    lcd.setCursor(7, 1);
+    if (masterClock / tick < 10)
+        lcd.print(0);
+    lcd.print(masterClock / tick);
+    if (damageA)
+    {
+        lcd.setCursor(13, 0);
+        lcd.print("T ");
+        lcd.print((ackClockA - masterClock) / tick);
+        lcd.setCursor(13, 1);
+        lcd.print("D ");
+        lcd.print(damageA);
+    }
+    if (damageB)
+    {
+        lcd.setCursor(0, 0);
+        lcd.print((ackClockB - masterClock) / tick);
+        lcd.print(" T");
+        lcd.setCursor(0, 1);
+        lcd.print(damageB);
+        lcd.print(" D");
+    }
+}
+
+// 人机用查询空隙
+void SearchGap(char player)
+{
+    uint8_t *map;
+    if (player == PLAYER_A)
+        map = map_A;
+    if (player == PLAYER_B)
+        map = map_B;
+    for (int i = 0; i < 15; i++)
+    {
+        uint8_t data = map[i];
+        uint8_t x = 9;
+        for (int j = 0; j < 3; j++)
+        {
+            if ((data & (0x80 >> j)) == 0)
+                x = j;
+            if (x < 9)
+            {
+                for (int k = i + 1; k < 15; k++)
+                    if (QueryMap(player, x, k))
+                    {
+                        x = 9;
+                        break;
+                    }
+            }
+            if (x < 9)
+            {
+                RobotInsertFlag = true;
+                break;
+            }
+        }
+        if (!RobotInsertFlag)
+            for (int j = 7; j >= 3; j--)
+            {
+                if ((data & (0x80 >> j)) == 0)
+                    x = j;
+                if (x < 9)
+                {
+                    for (int k = i + 1; k < 15; k++)
+                        if (QueryMap(player, x, k))
+                        {
+                            x = 9;
+                            break;
+                        }
+                }
+                if (x < 9)
+                {
+                    RobotInsertFlag = true;
+                    break;
+                }
+            }
+        if (RobotInsertFlag)
+        {
+            RobotInsert.SetData(x, i);
+            return;
+        }
+    }
+    RobotInsert.SetData(0, 0);
+    RobotInsertFlag = true;
+}
+
+// 人机处理
+bool Robot(char player)
+{
+    if (masterClock % 2 != 0)
+        return false;
+    uint8_t *length;
+    Location *food;
+    uint8_t *playerState;
+    List *list;
+    Location *playerL;
+    Time *time;
+    uint8_t *dir;
+    RockerSignal op;
+    if (player == PLAYER_A)
+    {
+        length = &lengthA;
+        food = &foodA;
+        playerState = &playerStateA;
+        list = listA;
+        playerL = &playerA;
+        time = &moveClockA;
+        dir = &playerDirA;
+    }
+    if (player == PLAYER_B)
+    {
+        length = &lengthB;
+        food = &foodB;
+        playerState = &playerStateB;
+        list = listB;
+        playerL = &playerB;
+        time = &moveClockB;
+        dir = &playerDirB;
+    }
+    if (*playerState == SNAKE)
+    {
+        if (playerL->x != food->x && 15 - playerL->y < *length + 15 - food->y)
+            op = DOWN;
+        else if (playerL->x != food->x && 15 - playerL->y >= *length + 15 - food->y)
+        {
+            if (playerL->x < food->x)
+                op = RIGHT;
+            else if (playerL->x > food->x)
+                op = LEFT;
+        }
+        else if (playerL->x == food->x)
+            op = UP;
+    }
+    else if (*playerState == TETRIS)
+    {
+        if (!RobotInsertFlag)
+            SearchGap(player);
+
+        if (list->Front()->x < RobotInsert.x)
+            op = RIGHT;
+        else if (list->Front()->x > RobotInsert.x)
+            op = LEFT;
+        else if (list->Front()->x == RobotInsert.x)
+            op = SEL;
+    }
+    else if (*playerState == INITIAL)
+    {
+        RobotInsertFlag = false;
+        op = 0;
+    }
+    return PlayerEvent(player, op, *length, *food, *time, *dir, *playerL, *playerState, list);
 }
 
 // 初始化系统
@@ -628,92 +910,6 @@ void StartMenu()
     ClearLED();
 }
 
-bool PlayerEvent(char player, uint8_t &length, Location &food, Time &moveClock, uint8_t &playerDir, Location &playerL, uint8_t &playerState, List *list)
-{
-    RockerSignal op = GetRockerSignal(player);
-    if (playerState == SNAKE)
-    {
-        if (op != 0 && op != SEL)
-        {
-            playerDir = op;
-            if (!MoveSnake(player, op, length)) // 判断移动是否成功
-            {
-                playerState = DIE;
-            }
-            else
-            {
-                if (playerL == food) // 如果吃到食物
-                {
-                    playerState = TETRIS;
-                }
-                moveClock = masterClock + tick;
-            }
-            return true;
-        }
-        else
-        {
-            if (moveClock < masterClock)
-            {
-                if (!MoveSnake(player, playerDir, length)) // 判断移动是否成功
-                {
-                    playerState = DIE;
-                }
-                else
-                {
-                    if (playerL == food) // 如果吃到食物
-                    {
-                        playerState = TETRIS;
-                    }
-                    moveClock = masterClock + tick;
-                }
-                return true;
-            }
-        }
-    }
-    else if (playerState == TETRIS)
-    {
-        if (op)
-        {
-            if (!MoveTetris(player, op))
-            {
-                if (!TetrisTrMap(player))
-                    playerState = DIE;
-                else
-                    playerState = INITIAL;
-            }
-            if (op == DOWN)
-                moveClock = masterClock + tick;
-        }
-        if (moveClock < masterClock && playerState == TETRIS)
-        {
-            if (!MoveTetris(player, DOWN))
-            {
-                if (!TetrisTrMap(player))
-                    playerState = DIE;
-                else
-                    playerState = INITIAL;
-            }
-            moveClock = masterClock + tick;
-            return true;
-        }
-        if (op)
-            return true;
-    }
-    else if (playerState == INITIAL)
-    {
-        playerL.SetData(random(0, 8), 15);
-        list->RemoveAll();
-        list->PushFront(playerL.x, 15);
-        playerDir = DOWN;
-        food.SetData(random(1, 7), random(12, 14));
-        length = random(3, 7);
-        moveClock = masterClock + tick;
-        playerState = SNAKE;
-        return true;
-    }
-    return false;
-}
-
 // 游戏进程
 void Gaming()
 {
@@ -721,26 +917,80 @@ void Gaming()
     {
         if (playFlagA) // 处理玩家A事件
         {
-            if (PlayerEvent(PLAYER_A, lengthA, foodA, moveClockA, playerDirA, playerA, playerStateA, listA))
+            if (PlayerEvent(PLAYER_A, GetRockerSignal(PLAYER_A), lengthA, foodA, moveClockA, playerDirA, playerA, playerStateA, listA))
                 RefreshDisplay(PLAYER_A);
-            if (playerStateA == INITIAL)
-                CheckMap(PLAYER_A);
         }
-        if (playerStateA == DIE)
+        else
         {
-            lcd.clear();
-            lcd.print("DIE");
-            break;
+            if (Robot(PLAYER_A))
+                RefreshDisplay(PLAYER_A);
         }
-        lcd.setCursor(0, 0);
-        lcd.print(masterClock / tick);
+        if (playerStateA == INITIAL)
+            damageA += CheckMap(PLAYER_A);
+        if (damageB && !ackClockB)
+            ackClockB = masterClock + tick * 3;
+        else if (damageB && ackClockB < masterClock)
+        {
+            AckEvent(PLAYER_B, damageB);
+            ackClockB = 0;
+            damageB = 0;
+        }
+
+        if (playFlagB) // 处理玩家B事件
+        {
+            if (PlayerEvent(PLAYER_B, GetRockerSignal(PLAYER_B), lengthB, foodB, moveClockB, playerDirB, playerB, playerStateB, listB))
+                RefreshDisplay(PLAYER_B);
+        }
+        else
+        {
+            if (Robot(PLAYER_B))
+                RefreshDisplay(PLAYER_B);
+        }
+        if (playerStateB == INITIAL)
+            damageB += CheckMap(PLAYER_B);
+        if (damageA && !ackClockA)
+            ackClockA = masterClock + tick * 3;
+        else if (damageA && ackClockA < masterClock)
+        {
+            AckEvent(PLAYER_A, damageA);
+            ackClockA = 0;
+            damageA = 0;
+        }
+
+        if (playerStateA == DIE || playerStateB == DIE)
+            break;
+        GamingInfo();
         delay(tickTime);
         masterClock++;
     }
+    state = END_GAME;
+}
+
+void EndGame()
+{
+    lcd.clear();
+    lcd.setCursor(3, 0);
+    lcd.print("GAME OVER!");
+    if (playerStateA == DIE)
+    {
+        lcd.setCursor(0, 1);
+        lcd.write(LEFTARROWS);
+        lcd.print("LOSE       WIN");
+        lcd.write(RIGHTARROWS);
+    }
+    if (playerStateB == DIE)
+    {
+        lcd.setCursor(0, 1);
+        lcd.write(LEFTARROWS);
+        lcd.print("WIN       LOSE");
+        lcd.write(RIGHTARROWS);
+    }
+    delay(2000);
 }
 
 void setup()
 {
+    Serial.begin(9600);
     // 初始化摇杆
     pinMode(VERT_PIN_A, INPUT);
     pinMode(HORZ_PIN_A, INPUT);
@@ -758,11 +1008,14 @@ void setup()
     listB = InitList();
 
     randomSeed(analogRead(A5));
-    InitSystem();
-    StartMenu();
-    Gaming();
 }
 
 void loop()
 {
+    InitSystem();
+    StartMenu();
+    Gaming();
+    EndGame();
+    while (GetRockerSignal(PLAYER_A) || GetRockerSignal(PLAYER_B))
+        delay(20);
 }
