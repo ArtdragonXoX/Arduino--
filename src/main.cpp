@@ -24,7 +24,6 @@
 #define RIGHT byte(4)
 #define SEL byte(5)
 
-#define BLOCK byte(0)
 #define LEFTARROWS byte(1)
 #define RIGHTARROWS byte(2)
 #define HOOK byte(3)
@@ -111,17 +110,6 @@ Location foodA, foodB;
 Location RobotInsert;
 // 寻找标签
 bool RobotInsertFlag;
-
-byte block_char[8] =
-    {
-        B11111,
-        B11111,
-        B11111,
-        B11111,
-        B11111,
-        B11111,
-        B11111,
-        B11111};
 
 byte leftArrows_char[8] =
     {
@@ -1000,7 +988,6 @@ void setup()
     pinMode(SEL_PIN_B, INPUT_PULLUP);
     // 初始化lcd屏
     lcd.begin(16, 2);
-    lcd.createChar(BLOCK, block_char);
     lcd.createChar(LEFTARROWS, leftArrows_char);
     lcd.createChar(RIGHTARROWS, rightArrows_char);
     lcd.createChar(HOOK, hook_char);
