@@ -811,7 +811,7 @@ void InitSystem()
         {
             lcA.setLed(i < 8 ? 0 : 1, i % 2 == 1 ? j : 7 - j, i % 8, true);
             lcB.setLed(i < 8 ? 0 : 1, i % 2 == 1 ? j : 7 - j, i % 8, true);
-            delay(0);
+            delay(5);
         }
 
     ClearLED();
